@@ -1,151 +1,41 @@
 var Service, Characteristic;
 var request = require("request");
+var extend = require('util')._extend;
 
 module.exports = function(homebridge){
   Service = homebridge.hap.Service;
   Characteristic = homebridge.hap.Characteristic;
-  homebridge.registerAccessory("homebridge-httpstatus", "Http", HttpStatusAccessory);
+  homebridge.registerAccessory("homebridge-http-ext", "HttpExt", HttpExtAccessory);
 }
 
 
-function HttpStatusAccessory(log, config) {
+function HttpExtAccessory(log, config) {
   this.log = log;
+  this.config = config;
 
-  // url info
-  this.on_url                 = config["on_url"];
-  this.on_body                = config["on_body"];
-  this.off_url                = config["off_url"];
-  this.off_body               = config["off_body"];
-  this.status_url             = config["status_url"];
-  this.brightness_url         = config["brightness_url"];
-  this.brightnesslvl_url      = config["brightnesslvl_url"];
-  this.http_method            = config["http_method"] 	  	 || "GET";;
-  this.http_brightness_method = config["http_brightness_method"] || this.http_method;
-  this.username               = config["username"] 	  	 || "";
-  this.password               = config["password"] 	  	 || "";
-  this.sendimmediately        = config["sendimmediately"] 	 || "";
-  this.service                = config["service"] 	  	 || "Switch";
-  this.name                   = config["name"];
-  this.brightnessHandling     = config["brightnessHandling"] 	 || "no";
-  this.switchHandling = config["switchHandling"] 		 || "no";
+  this.eventProcessors = {
+    get: this.getEventProcessor,
+    set: this.setEventProcessor
+  };
 }
 
-HttpStatusAccessory.prototype = {
+function stringToBoolean(string){
+    switch(string.toLowerCase().trim()){
+        case "true": case "yes": case "1": return true;
+        case "false": case "no": case "0": case null: return false;
+        default: return Boolean(string);
+    }
+}
 
-  httpRequest: function(url, body, method, username, password, sendimmediately, callback) {
-    request({
-      url: url,
-      body: body,
-      method: method,
-      rejectUnauthorized: false,
-      auth: {
-        user: username,
-        pass: password,
-        sendImmediately: sendimmediately
-      }
-    },
-    function(error, response, body) {
+HttpExtAccessory.prototype = {
+
+  httpRequest: function(options, callback) {
+    var defaults = {
+      method: "GET",
+    }
+    request(extend(defaults, options), function(error, response, body) {
       callback(error, response, body)
     })
-  },
-
-  setPowerState: function(powerOn, callback) {
-    var url;
-    var body;
-
-    if (!this.on_url || !this.off_url) {
-    	    this.log.warn("Ignoring request; No power url defined.");
-	    callback(new Error("No power url defined."));
-	    return;
-    }
-
-    if (powerOn) {
-      url = this.on_url;
-      body = this.on_body;
-      this.log("Setting power state to on");
-    } else {
-      url = this.off_url;
-      body = this.off_body;
-      this.log("Setting power state to off");
-    }
-
-    this.httpRequest(url, body, this.http_method, this.username, this.password, this.sendimmediately, function(error, response, responseBody) {
-      if (error) {
-        this.log('HTTP set power function failed: %s', error.message);
-        callback(error);
-      } else {
-        this.log('HTTP set power function succeeded!');
-        callback();
-      }
-    }.bind(this));
-  },
-  
-  getPowerState: function(callback) {
-    if (!this.status_url) {
-    	    this.log.warn("Ignoring request; No status url defined.");
-	    callback(new Error("No status url defined."));
-	    return;
-    }
-    
-    var url = this.status_url;
-    this.log("Getting power state");
-
-    this.httpRequest(url, "", "GET", this.username, this.password, this.sendimmediately, function(error, response, responseBody) {
-      if (error) {
-        this.log('HTTP get power function failed: %s', error.message);
-        callback(error);
-      } else {
-        var binaryState = parseInt(responseBody);
-        var powerOn = binaryState > 0;
-        this.log("Power state is currently %s", binaryState);
-        callback(null, powerOn);
-      }
-    }.bind(this));
-  },
-
-getBrightness: function(callback) {
-	if (!this.brightnesslvl_url) {
-    	    this.log.warn("Ignoring request; No brightness level url defined.");
-	    callback(new Error("No brightness level url defined."));
-	    return;
-	 }		
-		var url = this.brightnesslvl_url;
-		this.log("Getting Brightness level");
-
-		this.httpRequest(url, "", "GET", this.username, this.password, this.sendimmediately, function(error, response, responseBody) {
-		  if (error) {
-			this.log('HTTP get brightness function failed: %s', error.message);
-			callback(error);
-		  } else {			
-		    var binaryState = parseInt(responseBody);
-			var level = binaryState;
-			this.log("brightness state is currently %s", binaryState);
-			callback(null, level);
-		  }
-		}.bind(this));
-	  },
-
-  setBrightness: function(level, callback) {
-	
-	if (!this.brightness_url) {
-    	    this.log.warn("Ignoring request; No brightness url defined.");
-	    callback(new Error("No brightness url defined."));
-	    return;
-	 }    
-
-    var url = this.brightness_url.replace("%b", level)
-
-    this.log("Setting brightness to %s", level);
-
-    this.httpRequest(url, "", this.http_brightness_method, this.username, this.password, this.sendimmediately, function(error, response, body) {
-      if (error) {
-        this.log('HTTP brightness function failed: %s', error);
-        callback(error);
-      } else {
-        this.log('HTTP brightness function succeeded!');
-        callback();
-      }
-    }.bind(this));
   },
 
   identify: function(callback) {
@@ -153,54 +43,121 @@ getBrightness: function(callback) {
     callback(); // success
   },
 
-  getServices: function() {
+  getEventProcessor: function(options) {
+    return function(callback, context) {
+      if (!options.url) {
+        	    this.log.warn("Ignoring request; No url defined.");
+    	    callback(new Error("No url defined."));
+    	    return;
+    	}
+  		this.log("Getting value");
 
-    // you can OPTIONALLY create an information service if you wish to override
-    // the default values for things like serial number, model, etc.
-    var informationService = new Service.AccessoryInformation();
+  		this.httpRequest(options, function(error, response, responseBody) {
+  		  if (error) {
+    			this.log('HTTP get function failed: %s', error.message);
+    			callback(error);
+  		  } else {
+    			var value = responseBody;
 
-    informationService
-    .setCharacteristic(Characteristic.Manufacturer, "HTTP Manufacturer")
-    .setCharacteristic(Characteristic.Model, "HTTP Model")
-    .setCharacteristic(Characteristic.SerialNumber, "HTTP Serial Number");
+          var value_type = options.value_type;
+          if (value_type === "integer")
+            value = parseInt(value);
+          else if (value_type === "float")
+            value = parseFloat(value);
+          else if (value_type === "boolean")
+            value = stringToBoolean(value);
 
-    if (this.service == "Switch") {
-      var switchService = new Service.Switch(this.name);
+          this.log("get value is currently %s", value);
 
-      if (this.switchHandling == "yes") {
-			switchService
-			.getCharacteristic(Characteristic.On)
-			.on('get', this.getPowerState.bind(this))
-			.on('set', this.setPowerState.bind(this));
-		  } else {
-			switchService
-			.getCharacteristic(Characteristic.On)	
-			.on('set', this.setPowerState.bind(this));
-		  }
-      return [switchService];
-    } else if (this.service == "Light") {
-      var lightbulbService = new Service.Lightbulb(this.name);
+    			callback(null, value);
+  		  }
+  		}.bind(this));
+    };
+  },
 
-	if (this.switchHandling == "yes") {
-			lightbulbService
-			.getCharacteristic(Characteristic.On)
-			.on('get', this.getPowerState.bind(this))
-			.on('set', this.setPowerState.bind(this));
-		  } else {
-			lightbulbService
-			.getCharacteristic(Characteristic.On)	
-			.on('set', this.setPowerState.bind(this));
-		  }
+  setEventProcessor: function(options) {
+    return function(newValue, callback, context) {
+      var opts = extend({body: ""}, options);
 
-      if (this.brightnessHandling == "yes") {
+      var value = newValue;
+      // var value_type = options.value_type;
+      // if (value_type === "integer")
+      //   value = parseInt(value);
+      // else if (value_type === "float")
+      //   value = parseFloat(value);
+      // else if (value_type === "boolean")
+      //   value = stringToBoolean(String(value));
 
-        lightbulbService
-        .addCharacteristic(new Characteristic.Brightness())
-        .on('get', this.getBrightness.bind(this))
-        .on('set', this.setBrightness.bind(this));
+      opts.url = (typeof opts.url === "object") ? opts.url[value] : opts.url.replace("%NEW%", value);
+      opts.body = (typeof opts.body === "object") ? opts.body[value] : opts.body.replace("%NEW%", value);
+
+      if (!opts.url) {
+              this.log.warn("Ignoring request; No url defined.");
+          callback(new Error("No url defined."));
+          return;
       }
 
-      return [informationService, lightbulbService];
-    }
+      this.log("Setting new value to %s", value);
+
+      this.httpRequest(opts, (function(error, response, body) {
+        if (error) {
+          this.log('HTTP set function failed: %s', error);
+          callback(error);
+        } else {
+          this.log('HTTP set function succeeded!');
+          callback();
+        }
+      }).bind(this));
+    };
+  },
+
+  eventProcessor: function(event, options) {
+
+  },
+
+  getServices: function() {
+    var config = extend({}, this.config);
+    var services = (config.services || [])
+    .filter((srv) => !srv.disabled)
+    .map((srv) => {
+      if (!srv.service) {
+        this.log.warn("HTTP get services failed: no service type specified");
+        callback(new Error("No service type specified"));
+        return;
+      }
+
+      var service = new Service[srv.service](typeof srv.name === "undefined" ? config.name : srv.name, srv.subtype);
+      var chars = srv.characteristics || {};
+      for (var key in chars) {
+        if (chars.hasOwnProperty(key)) {
+          var char = chars[key];
+          if (typeof char == "undefined") {
+            // nothing
+          }
+          else if (typeof char == "object") {
+            var serviceChar = service.getCharacteristic(Characteristic[key]);
+            if (serviceChar) {
+              for (var event in char) {
+                if (char.hasOwnProperty(event)) {
+                  if (this.eventProcessors[event]) {
+                    var options = extend({value_type: srv.value_type}, config.httpOptions);
+                    var proc = this.eventProcessors[event](extend(options, char[event]));
+                    if (proc) {
+                      serviceChar.on(event, proc.bind(this));
+                    }
+                  }
+                }
+              }
+            }
+          }
+          else {
+            service.setCharacteristic(Characteristic[key], char);
+          }
+        }
+      }
+      return service;
+    });
+
+    return services;
   }
 };
